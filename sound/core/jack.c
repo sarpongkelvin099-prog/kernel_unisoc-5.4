@@ -11,7 +11,9 @@
 #include <sound/jack.h>
 #include <sound/core.h>
 #include <sound/control.h>
+#include <linux/pm_qos.h>
 
+static struct pm_qos_request jack_qos_req;
 struct snd_jack_kctl {
 	struct snd_kcontrol *kctl;
 	struct list_head list;  /* list of controls belong to the same jack */
@@ -65,6 +67,9 @@ static int snd_jack_dev_free(struct snd_device *device)
 		jack->private_free(jack);
 
 	snd_jack_dev_disconnect(device);
+
+	if (pm_qos_request_active(&jack_qos_req))
+        pm_qos_remove_request(&jack_qos_req);
 
 	kfree(jack->id);
 	kfree(jack);
@@ -347,13 +352,37 @@ EXPORT_SYMBOL(snd_jack_set_key);
 void snd_jack_report(struct snd_jack *jack, int status)
 {
 	struct snd_jack_kctl *jack_kctl;
+	static int last_reported_status = -1;
 #ifdef CONFIG_SND_JACK_INPUT_DEV
 	struct input_dev *idev;
 	int i;
 #endif
 
+	/* * If the state is identical to the previous one, we abort.
+     * This prevents Android's WiredAccessoryManager from waking up
+     * unnecessarily due to noise on the line.
+     */
+    if (status == last_reported_status)
+        return;
+    last_reported_status = status;
+
 	if (!jack)
 		return;
+
+	/* ask the system not to enter saving mode during the audio output transition */
+    if (!pm_qos_request_active(&jack_qos_req))
+		pm_qos_add_request(&jack_qos_req, PM_QOS_CPU_DMA_LATENCY, 0);
+	else
+		pm_qos_update_request(&jack_qos_req, 0);
+
+	/* disable preemption to ensure the jack status and button 
+	 * events are reported to Android's WiredAccessoryManager 
+	 * without scheduling delay.
+	 */
+	preempt_disable();
+
+	/* ensure the status bitmask is fully visible to this CPU core */
+    smp_rmb();
 
 	list_for_each_entry(jack_kctl, &jack->kctl_list, list)
 		snd_kctl_jack_report(jack->card, jack_kctl->kctl,
@@ -369,7 +398,7 @@ void snd_jack_report(struct snd_jack *jack, int status)
 
 		if (jack->type & testbit)
 			input_report_key(idev, jack->key[i],
-					 status & testbit);
+					 status ? (status & testbit) : 0);
 	}
 
 	for (i = 0; i < ARRAY_SIZE(jack_switch_types); i++) {
@@ -383,5 +412,10 @@ void snd_jack_report(struct snd_jack *jack, int status)
 	input_sync(idev);
 	input_put_device(idev);
 #endif /* CONFIG_SND_JACK_INPUT_DEV */
+
+	preempt_enable();
+
+	/* Boost is released after notifying userspace */
+    pm_qos_update_request(&jack_qos_req, PM_QOS_DEFAULT_VALUE);
 }
 EXPORT_SYMBOL(snd_jack_report);

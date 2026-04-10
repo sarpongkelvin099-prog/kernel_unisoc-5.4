@@ -15,7 +15,10 @@
 static int jack_detect_kctl_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
-	ucontrol->value.integer.value[0] = kcontrol->private_value;
+	/* Use READ_ONCE to ensure an atomic read of the 
+	 * jack status across different CPU cores.
+	 */
+	ucontrol->value.integer.value[0] = READ_ONCE(kcontrol->private_value);
 	return 0;
 }
 
@@ -77,8 +80,16 @@ snd_kctl_jack_new(const char *name, struct snd_card *card)
 void snd_kctl_jack_report(struct snd_card *card,
 			  struct snd_kcontrol *kctl, bool status)
 {
-	if (kctl->private_value == status)
+	/* Atomic check to avoid redundant notifications */
+	if (READ_ONCE(kctl->private_value) == status)
 		return;
-	kctl->private_value = status;
+
+	WRITE_ONCE(kctl->private_value, status);
+
+	/* Ensure the status update is visible to all 
+	 * cores before triggering the control event notification.
+	 */
+	smp_wmb(); 
+
 	snd_ctl_notify(card, SNDRV_CTL_EVENT_MASK_VALUE, &kctl->id);
 }
