@@ -18,35 +18,20 @@
 
 void snd_pcm_timer_resolution_change(struct snd_pcm_substream *substream)
 {
-	unsigned long rate, mult, fsize, l, post;
-	struct snd_pcm_runtime *runtime = substream->runtime;
+ 	struct snd_pcm_runtime *runtime = substream->runtime;
+	u64 res;
 
-	mult = 1000000000;
-	rate = runtime->rate;
-	if (snd_BUG_ON(!rate))
+	if (snd_BUG_ON(!runtime->rate || !runtime->period_size))
 		return;
-	l = gcd(mult, rate);
-	mult /= l;
-	rate /= l;
-	fsize = runtime->period_size;
-	if (snd_BUG_ON(!fsize))
-		return;
-	l = gcd(rate, fsize);
-	rate /= l;
-	fsize /= l;
-	post = 1;
-	while ((mult * fsize) / fsize != mult) {
-		mult /= 2;
-		post *= 2;
-	}
-	if (rate == 0) {
-		pcm_err(substream->pcm,
-			"pcm timer resolution out of range (rate = %u, period_size = %lu)\n",
-			runtime->rate, runtime->period_size);
-		runtime->timer_resolution = -1;
-		return;
-	}
-	runtime->timer_resolution = (mult * fsize / rate) * post;
+
+	/* * We use div_u64 for pure nanosecond precision.
+	 * This eliminates jitter caused by rounding errors in the
+	 * gcd() function and 32-bit while loops.
+	 *
+	 * Formula: (1e9 * period_size) / rate
+	 */
+	res = (u64)1000000000 * runtime->period_size;
+	runtime->timer_resolution = (unsigned long)div_u64(res, runtime->rate);
 }
 
 static unsigned long snd_pcm_timer_resolution(struct snd_timer * timer)
@@ -77,7 +62,7 @@ static int snd_pcm_timer_stop(struct snd_timer * timer)
 
 static struct snd_timer_hardware snd_pcm_timer =
 {
-	.flags =	SNDRV_TIMER_HW_AUTO | SNDRV_TIMER_HW_SLAVE,
+	.flags =	SNDRV_TIMER_HW_AUTO | SNDRV_TIMER_HW_TASKLET,
 	.resolution =	0,
 	.ticks =	1,
 	.c_resolution =	snd_pcm_timer_resolution,
@@ -107,9 +92,9 @@ void snd_pcm_timer_init(struct snd_pcm_substream *substream)
 	tid.subdevice = (substream->number << 1) | (substream->stream & 1);
 	if (snd_timer_new(substream->pcm->card, "PCM", &tid, &timer) < 0)
 		return;
-	sprintf(timer->name, "PCM %s %i-%i-%i",
-			substream->stream == SNDRV_PCM_STREAM_CAPTURE ?
-				"capture" : "playback",
+	sprintf(timer->name, "Hi-Fi PCM %s %i-%i-%i",
+			substream->stream == SNDRV_PCM_STREAM_PLAYBACK ?
+				"playback" : "capture",
 			tid.card, tid.device, tid.subdevice);
 	timer->hw = snd_pcm_timer;
 	if (snd_device_register(timer->card, timer) < 0) {
