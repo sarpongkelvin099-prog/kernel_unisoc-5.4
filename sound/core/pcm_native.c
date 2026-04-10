@@ -504,6 +504,10 @@ int snd_pcm_hw_refine(struct snd_pcm_substream *substream,
 
 	params->rmask = 0;
 
+	if (params->flags & SNDRV_PCM_HW_PARAMS_NORESAMPLE) {
+		params->info |= SNDRV_PCM_INFO_BATCH;
+	}
+
 	return 0;
 }
 EXPORT_SYMBOL(snd_pcm_hw_refine);
@@ -598,6 +602,8 @@ static int snd_pcm_hw_params_choose(struct snd_pcm_substream *pcm,
 	int changed;
 
 	for (v = vars; *v != -1; v++) {
+        if (params->rmask & (1 << *v))
+            continue;
 		/* Keep old parameter to trace. */
 		if (trace_hw_mask_param_enabled()) {
 			if (hw_is_mask(*v))
@@ -2423,7 +2429,9 @@ int snd_pcm_hw_constraints_complete(struct snd_pcm_substream *substream)
 	if (err < 0)
 		return err;
 
-	err = snd_pcm_hw_constraint_mask64(runtime, SNDRV_PCM_HW_PARAM_FORMAT, hw->formats);
+	/* We ignore the limitations of the driver and enable 24/32 bits */
+	err = snd_pcm_hw_constraint_mask64(runtime, SNDRV_PCM_HW_PARAM_FORMAT, 
+		hw->formats | SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S24_3LE | SNDRV_PCM_FMTBIT_S32_LE);
 	if (err < 0)
 		return err;
 
@@ -2437,7 +2445,7 @@ int snd_pcm_hw_constraints_complete(struct snd_pcm_substream *substream)
 		return err;
 
 	err = snd_pcm_hw_constraint_minmax(runtime, SNDRV_PCM_HW_PARAM_RATE,
-					   hw->rate_min, hw->rate_max);
+					   hw->rate_min, 384000);
 	if (err < 0)
 		return err;
 
