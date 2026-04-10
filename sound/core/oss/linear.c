@@ -166,6 +166,10 @@ int snd_pcm_plugin_build_linear(struct snd_pcm_substream *plug,
 	if (snd_BUG_ON(!snd_pcm_format_linear(src_format->format) ||
 		       !snd_pcm_format_linear(dst_format->format)))
 		return -ENXIO;
+	if (src_format->rate > 48000 || dst_format->rate > 48000)
+		return -ENXIO;
+	if (plug->runtime->hw.info & SNDRV_PCM_INFO_BATCH)
+		return -ENXIO;
 
 	err = snd_pcm_plugin_build(plug, "linear format conversion",
 				   src_format, dst_format,

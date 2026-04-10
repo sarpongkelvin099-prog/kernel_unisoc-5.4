@@ -441,7 +441,7 @@ static long snd_mixer_oss_conv(long val, long omin, long omax, long nmin, long n
 	
 	if (orange == 0)
 		return 0;
-	return ((nrange * (val - omin)) + (orange / 2)) / orange + nmin;
+	return (long)div_s64(((s64)nrange * (val - omin)) + (orange / 2), orange) + nmin;
 }
 
 /* convert from alsa native to oss values (0-100) */

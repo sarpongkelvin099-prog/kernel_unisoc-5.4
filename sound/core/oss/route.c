@@ -99,6 +99,10 @@ int snd_pcm_plugin_build_route(struct snd_pcm_substream *plug,
 		return -ENXIO;
 	if (snd_BUG_ON(src_format->format != dst_format->format))
 		return -ENXIO;
+	if (src_format->rate > 48000 || dst_format->rate > 48000)
+		return -ENXIO;
+	if (plug->runtime->hw.info & SNDRV_PCM_INFO_BATCH)
+		return -ENXIO;
 
 	err = snd_pcm_plugin_build(plug, "route conversion",
 				   src_format, dst_format, 0, &plugin);
