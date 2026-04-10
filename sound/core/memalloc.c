@@ -30,6 +30,7 @@ static void snd_malloc_dev_pages(struct snd_dma_buffer *dmab, size_t size)
 	gfp_flags = GFP_KERNEL
 		| __GFP_COMP	/* compound page lets parts be mapped */
 		| __GFP_NORETRY /* don't trigger OOM-killer */
+		| __GFP_HARDWALL /* ensure memory stays within the specific node */
 		| __GFP_NOWARN; /* no stack trace print - this call is non-critical */
 	dmab->area = dma_alloc_coherent(dmab->dev.dev, size, &dmab->addr,
 					gfp_flags);
@@ -76,8 +77,10 @@ static void snd_malloc_dev_iram(struct snd_dma_buffer *dmab, size_t size)
 	/* Assign the pool into private_data field */
 	dmab->private_data = pool;
 
-	dmab->area = gen_pool_dma_alloc_align(pool, size, &dmab->addr,
-					PAGE_SIZE);
+	/* Use 64-byte alignment (Cache line size) instead of PAGE_SIZE 
+	 * to optimize DMA burst transfers. 
+ 	 */
+	dmab->area = gen_pool_dma_alloc_align(pool, size, &dmab->addr, 64);
 }
 
 /**

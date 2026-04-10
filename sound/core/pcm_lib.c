@@ -205,7 +205,7 @@ static void update_audio_tstamp(struct snd_pcm_substream *substream,
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	u64 audio_frames, audio_nsecs;
-	struct timespec driver_tstamp;
+	struct timespec64 driver_ts64;
 
 	if (runtime->tstamp_mode != SNDRV_PCM_TSTAMP_ENABLE)
 		return;
@@ -227,8 +227,7 @@ static void update_audio_tstamp(struct snd_pcm_substream *substream,
 			else
 				audio_frames +=  runtime->delay;
 		}
-		audio_nsecs = div_u64(audio_frames * 1000000000LL,
-				runtime->rate);
+		audio_nsecs = div_u64(audio_frames * 1000000000ULL, runtime->rate);
 		*audio_tstamp = ns_to_timespec(audio_nsecs);
 	}
 	if (!timespec_equal(&runtime->status->audio_tstamp, audio_tstamp)) {
@@ -240,15 +239,17 @@ static void update_audio_tstamp(struct snd_pcm_substream *substream,
 	 * re-take a driver timestamp to let apps detect if the reference tstamp
 	 * read by low-level hardware was provided with a delay
 	 */
-	snd_pcm_gettime(substream->runtime, (struct timespec *)&driver_tstamp);
-	runtime->driver_tstamp = driver_tstamp;
+	ktime_get_raw_ts64(&driver_ts64);
+
+	runtime->driver_tstamp.tv_sec = (time_t)driver_ts64.tv_sec;
+	runtime->driver_tstamp.tv_nsec = driver_ts64.tv_nsec;
 }
 
 static int snd_pcm_update_hw_ptr0(struct snd_pcm_substream *substream,
 				  unsigned int in_interrupt)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
-	snd_pcm_uframes_t pos;
+	snd_pcm_uframes_t pos, xrun_margin;
 	snd_pcm_uframes_t old_hw_ptr, new_hw_ptr, hw_base;
 	snd_pcm_sframes_t hdelta, delta;
 	unsigned long jdelta;
@@ -371,6 +372,12 @@ static int snd_pcm_update_hw_ptr0(struct snd_pcm_substream *substream,
 	if (!xrun_debug(substream, XRUN_DEBUG_JIFFIESCHECK))
 		goto no_jiffies_check;
 
+	/* For Hi-Res audio (above 96kHz), jiffies check is too coarse and 
+	 * can cause micro-stutters. We skip it to maintain bit-perfect flow.
+	 */
+	if (runtime->rate > 96000)
+		goto no_jiffies_check;
+
 	/* Skip the jiffies check for hardwares with BATCH flag.
 	 * Such hardware usually just increases the position at each IRQ,
 	 * thus it can't give any strange position.
@@ -412,13 +419,23 @@ static int snd_pcm_update_hw_ptr0(struct snd_pcm_substream *substream,
 		hw_base = new_hw_ptr - (new_hw_ptr % runtime->buffer_size);
 	}
  no_jiffies_check:
-	if (delta > runtime->period_size + runtime->period_size / 2) {
+	xrun_margin = (runtime->rate > 96000) ?
+				   runtime->period_size * 2 :
+				   runtime->period_size + runtime->period_size / 2;
+
+	if (delta > xrun_margin) {
 		hw_ptr_error(substream, in_interrupt,
 			     "Lost interrupts?",
 			     "(stream=%i, delta=%ld, new_hw_ptr=%ld, old_hw_ptr=%ld)\n",
 			     substream->stream, (long)delta,
 			     (long)new_hw_ptr,
 			     (long)old_hw_ptr);
+
+		/* If we are in Hi-Res mode, instead of failing, we force the 
+		 * hw_ptr to the current position to avoid audio distortion.
+		 */
+		if (runtime->rate > 96000)
+			delta = 0;
 	}
 
  no_delta_check:
@@ -1786,6 +1803,8 @@ void snd_pcm_period_elapsed(struct snd_pcm_substream *substream)
 	if (snd_BUG_ON(!substream))
 		return;
 
+	preempt_disable();
+
 	snd_pcm_stream_lock_irqsave(substream, flags);
 	if (PCM_RUNTIME_CHECK(substream))
 		goto _unlock;
@@ -1803,6 +1822,8 @@ void snd_pcm_period_elapsed(struct snd_pcm_substream *substream)
 	kill_fasync(&runtime->fasync, SIGIO, POLL_IN);
  _unlock:
 	snd_pcm_stream_unlock_irqrestore(substream, flags);
+
+	preempt_enable();
 }
 EXPORT_SYMBOL(snd_pcm_period_elapsed);
 
@@ -2206,6 +2227,7 @@ snd_pcm_sframes_t __snd_pcm_lib_xfer(struct snd_pcm_substream *substream,
 			if (!avail)
 				continue; /* draining */
 		}
+		prefetch(data + offset);
 		frames = size > avail ? avail : size;
 		appl_ptr = READ_ONCE(runtime->control->appl_ptr);
 		appl_ofs = appl_ptr % runtime->buffer_size;
