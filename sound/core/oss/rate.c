@@ -104,7 +104,7 @@ static void resample_expand(struct snd_pcm_plugin *plugin,
 					src += src_step;
 				}
 			}
-			val = S1 + ((S2 - S1) * (signed int)pos) / BITS;
+			val = S1 + (((S2 - S1) * (signed int)pos) + (BITS >> 1)) / BITS;
 			if (val < -32768)
 				val = -32768;
 			else if (val > 32767)
@@ -162,7 +162,7 @@ static void resample_shrink(struct snd_pcm_plugin *plugin,
 			}
 			if (pos & ~R_MASK) {
 				pos &= R_MASK;
-				val = S1 + ((S2 - S1) * (signed int)pos) / BITS;
+				val = S1 + (((S2 - S1) * (signed int)pos) + (BITS >> 1)) / BITS;
 				if (val < -32768)
 					val = -32768;
 				else if (val > 32767)
@@ -319,6 +319,10 @@ int snd_pcm_plugin_build_rate(struct snd_pcm_substream *plug,
 	if (snd_BUG_ON(dst_format->format != SNDRV_PCM_FORMAT_S16))
 		return -ENXIO;
 	if (snd_BUG_ON(src_format->rate == dst_format->rate))
+		return -ENXIO;
+	if (src_format->rate > 48000 || dst_format->rate > 48000)
+		return -ENXIO;
+	if (plug->runtime->hw.info & SNDRV_PCM_INFO_BATCH)
 		return -ENXIO;
 
 	err = snd_pcm_plugin_build(plug, "rate conversion",
