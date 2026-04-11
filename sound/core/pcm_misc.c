@@ -425,12 +425,26 @@ int snd_pcm_format_set_silence(snd_pcm_format_t format, void *data, unsigned int
 	pat = pcm_formats[(INT)format].silence;
 	if (!width || !pat)
 		return -EINVAL;
-	/* signed or 1 byte data */
-	if (pcm_formats[(INT)format].signd == 1 || width <= 8) {
+
+	prefetchw(data);
+
+	/* for signed formats (S16_LE, S24_LE, S32_LE), silence is always 0x00.
+	 * Using memset() is significantly faster than a memcpy loop.
+	 */
+	if (pcm_formats[(INT)format].signd == 1) {
+		memset(data, 0, samples * width / 8);
+		return 0;
+	}
+
+	/* rest of the cases (unsigned or special formats) */
+	if (width <= 8) {
 		unsigned int bytes = samples * width / 8;
 		memset(data, *pat, bytes);
 		return 0;
 	}
+
+	prefetchw(data);
+
 	/* non-zero samples, fill using a loop */
 	width /= 8;
 	dst = data;
