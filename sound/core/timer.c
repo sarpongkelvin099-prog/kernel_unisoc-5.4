@@ -471,11 +471,13 @@ static void snd_timer_notify1(struct snd_timer_instance *ti, int event)
 	unsigned long resolution = 0;
 	struct snd_timer_instance *ts;
 	struct timespec tstamp;
+	struct timespec64 ts64;
 
-	if (timer_tstamp_monotonic)
-		ktime_get_ts(&tstamp);
-	else
-		getnstimeofday(&tstamp);
+	ktime_get_raw_ts64(&ts64);
+
+	tstamp.tv_sec = (time_t)ts64.tv_sec;
+	tstamp.tv_nsec = ts64.tv_nsec;
+
 	if (snd_BUG_ON(event < SNDRV_TIMER_EVENT_START ||
 		       event > SNDRV_TIMER_EVENT_PAUSE))
 		return;
@@ -836,12 +838,14 @@ void snd_timer_interrupt(struct snd_timer * timer, unsigned long ticks_left)
 	 */
 	list_for_each_entry_safe(ti, tmp, &timer->active_list_head,
 				 active_list) {
+		prefetch(tmp);
 		if (ti->flags & SNDRV_TIMER_IFLG_DEAD)
 			continue;
 		if (!(ti->flags & SNDRV_TIMER_IFLG_RUNNING))
 			continue;
-		ti->pticks += ticks_left;
+		WRITE_ONCE(ti->pticks, ti->pticks + ticks_left);
 		ti->resolution = resolution;
+		smp_wmb();
 		if (ti->cticks < ticks_left)
 			ti->cticks = 0;
 		else
@@ -1173,8 +1177,8 @@ static int snd_timer_s_close(struct snd_timer *timer)
 static struct snd_timer_hardware snd_timer_system =
 {
 	.flags =	SNDRV_TIMER_HW_FIRST | SNDRV_TIMER_HW_TASKLET,
-	.resolution =	1000000000L / HZ,
-	.ticks =	10000000L,
+	.resolution =	1, 
+	.ticks =	1000000000L, /* 1 second in ns */
 	.close =	snd_timer_s_close,
 	.start =	snd_timer_s_start,
 	.stop =		snd_timer_s_stop
@@ -1373,6 +1377,7 @@ static void snd_timer_user_tinterrupt(struct snd_timer_instance *timeri,
 	struct snd_timer_user *tu = timeri->callback_data;
 	struct snd_timer_tread *r, r1;
 	struct timespec tstamp;
+	struct timespec64 ts64;
 	int prev, append = 0;
 
 	memset(&r1, 0, sizeof(r1));
@@ -1384,10 +1389,9 @@ static void snd_timer_user_tinterrupt(struct snd_timer_instance *timeri,
 		return;
 	}
 	if (tu->last_resolution != resolution || ticks > 0) {
-		if (timer_tstamp_monotonic)
-			ktime_get_ts(&tstamp);
-		else
-			getnstimeofday(&tstamp);
+		ktime_get_raw_ts64(&ts64);
+		tstamp.tv_sec = (time_t)ts64.tv_sec;
+		tstamp.tv_nsec = ts64.tv_nsec;
 	}
 	if ((tu->filter & (1 << SNDRV_TIMER_EVENT_RESOLUTION)) &&
 	    tu->last_resolution != resolution) {
