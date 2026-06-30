@@ -1,3 +1,4 @@
+
 name: Build Kernel
 
 on:
@@ -20,14 +21,6 @@ jobs:
             python3 device-tree-compiler libncurses-dev ccache \
             build-essential libelf-dev
 
-      - name: Download Proton Clang 12
-        run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain
-
-      - name: Show available defconfigs (debug step)
-        run: |
-          ls arch/arm64/configs/ | grep -i ums9230 || ls arch/arm64/configs/
-
       - name: Build kernel
         run: |
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
@@ -38,6 +31,7 @@ jobs:
           export CC=clang
           make O=out ARCH=arm64 sprd_qogirl6_defconfig
           make -j$(nproc) O=out ARCH=arm64 CC=clang 2>&1 | tee build.log
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
