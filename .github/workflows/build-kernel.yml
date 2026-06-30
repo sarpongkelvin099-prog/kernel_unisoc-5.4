@@ -9,8 +9,6 @@ jobs:
     steps:
       - name: Checkout kernel source
         uses: actions/checkout@v4
-        with:
-          ref: 20251210
 
       - name: Install build dependencies
         run: |
