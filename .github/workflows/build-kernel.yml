@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
     steps:
       - name: Checkout kernel source
         uses: actions/checkout@v4
@@ -21,7 +22,7 @@ jobs:
             build-essential libelf-dev
 
       - name: Build kernel
-        timeout-minutes: 45
+        timeout-minutes: 80
         run: |
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
           export ARCH=arm64
@@ -29,14 +30,24 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+
+          # Load base defconfig
           make O=out ARCH=arm64 sprd_qogirl6_defconfig
-          # Disable LTO to prevent hanging on runner
-          scripts/config --file out/.config \
+
+          # Disable LTO to prevent multi-hour link times on runner
+          ./scripts/config --file out/.config \
             -d LTO_CLANG \
             -d THINLTO \
-            -d LTO_CLANG_FULL
+            -d LTO_CLANG_FULL \
+            -d CFI_CLANG
           make O=out ARCH=arm64 olddefconfig
-          make -j$(nproc) O=out ARCH=arm64 CC=clang 2>&1 | tee build.log
+
+          # Build with explicit parallelism
+          make -j$(nproc --all) O=out ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            2>&1 | tee build.log
 
       - name: Upload build log
         if: always()
