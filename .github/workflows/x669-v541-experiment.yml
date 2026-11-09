@@ -1,0 +1,74 @@
+name: X669 V541 boot-only experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      disable_lto_cfi:
+        description: "Disable LTO/CFI/ShadowCallStack (much faster, runner-friendly)"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout (no KernelSU/Baseband-guard submodules)
+        uses: actions/checkout@v4
+        with:
+          ref: x669-v541-experiment
+          submodules: false
+
+      - name: Fetch only the toolchain submodule
+        run: git submodule update --init --depth 1 toolchain
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make flex bison bc libssl-dev python3 \
+            device-tree-compiler libncurses-dev build-essential libelf-dev \
+            lz4 cpio zstd gcc-aarch64-linux-gnu
+
+      - name: Configure (stock V541 config, signing off)
+        run: |
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          clang --version | head -1
+          make O=out ARCH=arm64 x669_v541_stock_defconfig
+          # Own kernel cannot satisfy stock key; no module signing in this experiment
+          ./scripts/config --file out/.config \
+            -d MODULE_SIG -d MODULE_SIG_FORCE -d MODULE_SIG_ALL \
+            --set-str MODULE_SIG_KEY "" \
+            --set-str LOCALVERSION "-x669-v541-exp"
+          if [ "${{ inputs.disable_lto_cfi }}" = "true" ]; then
+            ./scripts/config --file out/.config \
+              -d LTO_CLANG -d THINLTO -d CFI_CLANG -d CFI_CLANG_SHADOW \
+              -d SHADOW_CALL_STACK -e LTO_NONE
+          fi
+          make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 olddefconfig
+
+      - name: Build Image and modules
+        run: |
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          make -j"$(nproc)" O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- Image.gz-dtb 2>&1 | tail -n 400 > build_tail.log || true
+          make -j"$(nproc)" O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- Image modules 2>&1 | tee build.log | tail -n 60
+          test -f out/arch/arm64/boot/Image
+
+      - name: Collect output
+        if: success()
+        run: |
+          mkdir -p dist
+          cp out/arch/arm64/boot/Image dist/
+          cp out/.config dist/config.used
+          make O=out ARCH=arm64 CC=clang LLVM=1 INSTALL_MOD_PATH=$PWD/dist/mods modules_install || true
+          cp tools/x669/repack_boot.py dist/
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: x669-v541-experiment
+          path: |
+            dist/
+            build.log
