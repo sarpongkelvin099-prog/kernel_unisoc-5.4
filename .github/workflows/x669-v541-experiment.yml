@@ -48,7 +48,10 @@ jobs:
             --set-str MODULE_SIG_KEY "" \
             --set-str LOCALVERSION "-x669-v541-exp" \
             -d HYBRIDSWAP -d HYBRIDSWAP_SWAPD \
-            -d DRM_SPRD_GSP -d TOUCHSCREEN_OMNIVISION_TCM
+            -d DRM_SPRD_GSP -d TOUCHSCREEN_OMNIVISION_TCM \
+            -d CMDLINE_FROM_BOOTLOADER -e CMDLINE_EXTEND \
+            --set-str CMDLINE "ignore_loglevel initcall_debug printk.time=1 panic=5" \
+            -e SPRD_WATCHDOG_PMIC
           if [ "${{ inputs.disable_lto_cfi }}" = "true" ]; then
             ./scripts/config --file out/.config \
               -d LTO_CLANG -d THINLTO -d CFI_CLANG -d CFI_CLANG_SHADOW \
