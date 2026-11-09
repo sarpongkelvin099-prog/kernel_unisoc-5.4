@@ -22,6 +22,14 @@ jobs:
       - name: Fetch only the toolchain submodule
         run: git submodule update --init --depth 1 toolchain
 
+      - name: Drop optional KernelSU / Baseband-guard Kconfig hooks (submodules not fetched)
+        run: |
+          sed -i '/drivers\/kernelsu\/Kconfig/d' drivers/Kconfig
+          sed -i '/baseband-guard\/Kconfig/d' security/Kconfig
+          sed -i '/CONFIG_KSU)/d' drivers/Makefile
+          sed -i '/CONFIG_BBG)/d' security/Makefile
+          grep -rIl $'\r' --include='Kconfig*' . | xargs -r sed -i 's/\r$//'
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
