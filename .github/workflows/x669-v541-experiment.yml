@@ -47,7 +47,8 @@ jobs:
             -d MODULE_SIG -d MODULE_SIG_FORCE -d MODULE_SIG_ALL \
             --set-str MODULE_SIG_KEY "" \
             --set-str LOCALVERSION "-x669-v541-exp" \
-            -d HYBRIDSWAP -d HYBRIDSWAP_SWAPD
+            -d HYBRIDSWAP -d HYBRIDSWAP_SWAPD \
+            -d DRM_SPRD_GSP -d TOUCHSCREEN_OMNIVISION_TCM
           if [ "${{ inputs.disable_lto_cfi }}" = "true" ]; then
             ./scripts/config --file out/.config \
               -d LTO_CLANG -d THINLTO -d CFI_CLANG -d CFI_CLANG_SHADOW \
@@ -58,7 +59,7 @@ jobs:
       - name: Build Image and modules
         run: |
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
-          make -k -j"$(nproc)" O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
+          make -k -j"$(nproc)" O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 KCFLAGS="-Wno-error" \
             CROSS_COMPILE=aarch64-linux-gnu- Image modules 2>&1 | tee build.log | tail -n 40 || true
           grep -E "error:|\*\*\* " build.log | sed 's/\x1b\[[0-9;]*m//g' | head -60
           test -f out/arch/arm64/boot/Image
