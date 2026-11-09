@@ -70,14 +70,25 @@ jobs:
           mkdir -p dist
           cp out/arch/arm64/boot/Image dist/
           cp out/.config dist/config.used
-          make O=out ARCH=arm64 CC=clang LLVM=1 INSTALL_MOD_PATH=$PWD/dist/mods modules_install || true
+          make O=out ARCH=arm64 CC=clang LLVM=1 INSTALL_MOD_PATH=$PWD/dist/mods INSTALL_MOD_STRIP=1 modules_install || true
+          rm -f dist/mods/lib/modules/*/build dist/mods/lib/modules/*/source
+          ls -l dist/Image; du -sh dist/mods
           cp tools/x669/repack_boot.py dist/
 
-      - name: Upload
+      - name: Upload kernel Image (small)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: x669-v541-experiment
+          name: x669-image
           path: |
-            dist/
+            dist/Image
+            dist/config.used
+            dist/repack_boot.py
             build.log
+
+      - name: Upload stripped modules
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: x669-modules
+          path: dist/mods
